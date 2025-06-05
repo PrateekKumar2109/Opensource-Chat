@@ -14,10 +14,6 @@ st.set_page_config(page_title="PDF Chatbot with Qwen 1B", layout="wide")
 st.title("📄 PDF Chatbot with Qwen 1B")
 st.markdown("Upload a PDF and ask questions about its content using a lightweight RAG system powered by Qwen 1B.")
 
-# Disable Streamlit file watcher to avoid PyTorch conflicts
-st.set_option('deprecation.showfileUploaderEncoding', False)
-st.set_option('client.showErrorDetails', False)
-
 # Initialize session state for storing vector store and chat history
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
@@ -165,5 +161,5 @@ st.markdown("""
 3. Enter your question in the text box and get answers based on the PDF content.
 4. View the chat history and source documents for transparency.
 
-**Note:** The system uses Qwen 1B (Qwen2.5-1.5B-Instruct) and runs entirely on CPU, making it suitable for Streamlit Cloud.
+**Note:** The system uses Qwen 1B (Qwen2.5-1.5B-Instruct) and runs entirely on CPU, making it suitable for Streamlit Cloud. If you encounter issues, ensure all dependencies are installed and consider running with `--server.fileWatcherType none`.
 """)
