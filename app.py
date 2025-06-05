@@ -5,11 +5,19 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-import torch
 import re
 from typing import List, Dict, Any
 import warnings
 warnings.filterwarnings("ignore")
+
+# Lazy import PyTorch to avoid Streamlit watcher conflicts
+def lazy_import_torch():
+    try:
+        import torch
+        return torch
+    except ImportError:
+        st.error("PyTorch not installed. Please install it with: pip install torch")
+        return None
 
 # Page config
 st.set_page_config(
@@ -102,7 +110,11 @@ class RAGSystem:
     def __init__(self, model_name: str, embedding_model: str):
         self.model_name = model_name
         self.embedding_model_name = embedding_model
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.torch = lazy_import_torch()
+        if self.torch is None:
+            return
+            
+        self.device = "cuda" if self.torch.cuda.is_available() else "cpu"
         
         # Initialize components
         self.load_models()
@@ -112,6 +124,10 @@ class RAGSystem:
         
     def load_models(self):
         """Load the language model and embedding model"""
+        if self.torch is None:
+            st.error("PyTorch not available")
+            return
+            
         try:
             with st.spinner(f"Loading {self.model_name}..."):
                 # Load tokenizer and model
@@ -126,8 +142,8 @@ class RAGSystem:
                 
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
-                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                    device_map="auto" if torch.cuda.is_available() else None,
+                    torch_dtype=self.torch.float16 if self.torch.cuda.is_available() else self.torch.float32,
+                    device_map="auto" if self.torch.cuda.is_available() else None,
                     trust_remote_code=True,
                     low_cpu_mem_usage=True
                 )
@@ -137,8 +153,8 @@ class RAGSystem:
                     "text-generation",
                     model=self.model,
                     tokenizer=self.tokenizer,
-                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                    device_map="auto" if torch.cuda.is_available() else None
+                    torch_dtype=self.torch.float16 if self.torch.cuda.is_available() else self.torch.float32,
+                    device_map="auto" if self.torch.cuda.is_available() else None
                 )
                 
             with st.spinner("Loading embedding model..."):
@@ -298,7 +314,7 @@ if 'pdf_processed' not in st.session_state:
 st.markdown("""
 <div class="main-header">
     <h1>📚 RAG PDF Assistant</h1>
-    <p>Upload your PDF and ask questions powered by Qwen3 & Llama 3</p>
+    <p>Upload your PDF and ask questions powered by Qwen2.5 & Llama 3.2</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -324,10 +340,11 @@ with st.sidebar:
     
     # Model initialization
     if st.button("🚀 Initialize Model", key="init_model"):
-        st.session_state.rag_system = RAGSystem(
-            model_info['model_name'],
-            model_info['embedding_model']
-        )
+        with st.spinner("Initializing RAG system..."):
+            st.session_state.rag_system = RAGSystem(
+                model_info['model_name'],
+                model_info['embedding_model']
+            )
     
     st.divider()
     
@@ -448,19 +465,26 @@ with col2:
     
     # System info
     st.header("💻 System Info")
-    device = "GPU" if torch.cuda.is_available() else "CPU"
-    st.info(f"🖥️ Running on: {device}")
-    
-    if torch.cuda.is_available():
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-        st.info(f"🎮 GPU Memory: {gpu_memory:.1f} GB")
+    torch = lazy_import_torch()
+    if torch:
+        device = "GPU" if torch.cuda.is_available() else "CPU"
+        st.info(f"🖥️ Running on: {device}")
+        
+        if torch.cuda.is_available():
+            try:
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
+                st.info(f"🎮 GPU Memory: {gpu_memory:.1f} GB")
+            except:
+                st.info("🎮 GPU available but memory info unavailable")
+    else:
+        st.warning("⚠️ PyTorch not available")
     
     # Tips
     st.header("💡 Tips")
     st.markdown("""
     - **Better Questions**: Be specific and detailed
     - **Context Matters**: Questions about document content work best
-    - **Model Selection**: Qwen3 for reasoning, Llama 3 for speed
+    - **Model Selection**: Qwen2.5 for reasoning, Llama 3.2 for speed
     - **Chunk Size**: Larger chunks for detailed context
     """)
 
@@ -468,6 +492,6 @@ with col2:
 st.divider()
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1rem;">
-    <p>Built with ❤️ using Streamlit • Powered by Qwen3 & Llama 3</p>
+    <p>Built with ❤️ using Streamlit • Powered by Qwen2.5 & Llama 3.2</p>
 </div>
 """, unsafe_allow_html=True)
