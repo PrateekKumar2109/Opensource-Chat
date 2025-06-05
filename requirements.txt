@@ -19,7 +19,7 @@ pandas
 langchain
 #xformers
 bitsandbytes
-
+langchain-community
 
 # Additional utilities
 requests
