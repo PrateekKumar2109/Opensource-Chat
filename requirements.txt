@@ -1,6 +1,7 @@
 torch
 torchvision
 torchaudio
+python==3.11
 numpy
 streamlit
 Pillow
