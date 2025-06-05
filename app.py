@@ -1,12 +1,14 @@
 import streamlit as st
 import PyPDF2
-import langchain
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import os
+
+# Disable Streamlit's file watcher to avoid module path inspection error
+os.environ["STREAMLIT_SERVER_WATCH_FILESYSTEM"] = "false"
 
 # Set page configuration
 st.set_page_config(page_title="PDF RAG App", page_icon="📄")
@@ -118,6 +120,9 @@ if st.session_state.vector_store:
         with st.spinner("Generating answer..."):
             answer = generate_answer(query, st.session_state.vector_store)
         st.write("**Answer:**")
+        st.write(answer)
+else:
+    st.info("Please upload a PDF file to start asking questions.")
         st.write(answer)
 else:
     st.info("Please upload a PDF file to start asking questions.")
