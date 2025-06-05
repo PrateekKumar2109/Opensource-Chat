@@ -8,15 +8,30 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 import re
 from typing import List, Dict, Any
 import warnings
+import asyncio
+
 warnings.filterwarnings("ignore")
 
-# Lazy import PyTorch to avoid Streamlit watcher conflicts
+# Ensure event loop for async compatibility
+def ensure_event_loop():
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop
+
+# Lazy import PyTorch
 def lazy_import_torch():
+    ensure_event_loop()
     try:
         import torch
         return torch
     except ImportError:
         st.error("PyTorch not installed. Please install it with: pip install torch")
+        return None
+    except Exception as e:
+        st.error(f"Error importing PyTorch: {str(e)}")
         return None
 
 # Page config
@@ -100,7 +115,7 @@ MODEL_CONFIGS = {
     },
     "Llama-3.2-3B-Instruct": {
         "model_name": "meta-llama/Llama-3.2-3B-Instruct",
-        "embedding_model": "all-MiniLM-L6-v2", 
+        "embedding_model": "all-MiniLM-L6-v2",
         "description": "Meta Llama 3.2 3B - Fast and efficient for general tasks",
         "color": "#764ba2"
     }
@@ -110,33 +125,31 @@ class RAGSystem:
     def __init__(self, model_name: str, embedding_model: str):
         self.model_name = model_name
         self.embedding_model_name = embedding_model
-        self.torch = lazy_import_torch()
-        if self.torch is None:
-            return
-            
-        self.device = "cuda" if self.torch.cuda.is_available() else "cpu"
-        
-        # Initialize components
-        self.load_models()
+        self.torch = None
+        self.device = None
+        self.tokenizer = None
+        self.model = None
+        self.pipe = None
+        self.embedding_model = None
         self.documents = []
         self.embeddings = None
         self.index = None
-        
+
     def load_models(self):
         """Load the language model and embedding model"""
+        self.torch = lazy_import_torch()
         if self.torch is None:
             st.error("PyTorch not available")
             return
-            
+
+        self.device = "cuda" if self.torch.cuda.is_available() else "cpu"
         try:
             with st.spinner(f"Loading {self.model_name}..."):
-                # Load tokenizer and model
                 self.tokenizer = AutoTokenizer.from_pretrained(
                     self.model_name,
                     trust_remote_code=True
                 )
                 
-                # Set pad_token if not set
                 if self.tokenizer.pad_token is None:
                     self.tokenizer.pad_token = self.tokenizer.eos_token
                 
@@ -148,7 +161,6 @@ class RAGSystem:
                     low_cpu_mem_usage=True
                 )
                 
-                # Create pipeline
                 self.pipe = pipeline(
                     "text-generation",
                     model=self.model,
@@ -156,17 +168,16 @@ class RAGSystem:
                     torch_dtype=self.torch.float16 if self.torch.cuda.is_available() else self.torch.float32,
                     device_map="auto" if self.torch.cuda.is_available() else None
                 )
-                
+            
             with st.spinner("Loading embedding model..."):
-                # Load embedding model
                 self.embedding_model = SentenceTransformer(self.embedding_model_name)
-                
+            
             st.success("✅ Models loaded successfully!")
             
         except Exception as e:
             st.error(f"Error loading models: {str(e)}")
             st.info("💡 Tip: Make sure you have enough GPU memory or try running on CPU")
-    
+
     def extract_text_from_pdf(self, pdf_file) -> str:
         """Extract text from uploaded PDF file"""
         try:
@@ -178,7 +189,7 @@ class RAGSystem:
         except Exception as e:
             st.error(f"Error reading PDF: {str(e)}")
             return ""
-    
+
     def chunk_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
         """Split text into overlapping chunks"""
         chunks = []
@@ -192,7 +203,6 @@ class RAGSystem:
             
             chunk = text[start:end]
             
-            # Try to end at a sentence boundary
             if end < text_len:
                 last_period = chunk.rfind('.')
                 last_newline = chunk.rfind('\n')
@@ -205,7 +215,7 @@ class RAGSystem:
             start = end - overlap
             
         return [chunk for chunk in chunks if len(chunk.strip()) > 50]
-    
+
     def create_vector_store(self, documents: List[str]):
         """Create FAISS vector store from documents"""
         try:
@@ -213,11 +223,9 @@ class RAGSystem:
                 self.documents = documents
                 self.embeddings = self.embedding_model.encode(documents)
                 
-                # Create FAISS index
                 dimension = self.embeddings.shape[1]
-                self.index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
+                self.index = faiss.IndexFlatIP(dimension)
                 
-                # Normalize embeddings for cosine similarity
                 faiss.normalize_L2(self.embeddings)
                 self.index.add(self.embeddings.astype('float32'))
                 
@@ -225,24 +233,21 @@ class RAGSystem:
             
         except Exception as e:
             st.error(f"Error creating vector store: {str(e)}")
-    
+
     def retrieve_relevant_docs(self, query: str, k: int = 3) -> List[str]:
         """Retrieve most relevant documents for the query"""
         if self.index is None:
             return []
         
         try:
-            # Encode query
             query_embedding = self.embedding_model.encode([query])
             faiss.normalize_L2(query_embedding)
             
-            # Search
             scores, indices = self.index.search(query_embedding.astype('float32'), k)
             
-            # Return relevant documents
             relevant_docs = []
             for i, idx in enumerate(indices[0]):
-                if idx < len(self.documents) and scores[0][i] > 0.1:  # Threshold for relevance
+                if idx < len(self.documents) and scores[0][i] > 0.1:
                     relevant_docs.append(self.documents[idx])
             
             return relevant_docs
@@ -250,11 +255,10 @@ class RAGSystem:
         except Exception as e:
             st.error(f"Error retrieving documents: {str(e)}")
             return []
-    
+
     def generate_answer(self, query: str, context: str) -> str:
         """Generate answer using the language model"""
         try:
-            # Create prompt
             if "qwen" in self.model_name.lower():
                 prompt = f"""<|im_start|>system
 You are a helpful AI assistant. Answer the question based on the provided context. If the context doesn't contain relevant information, say so clearly.
@@ -265,18 +269,17 @@ Context: {context}
 Question: {query}
 <|im_end|>
 <|im_start|>assistant"""
-            else:  # Llama format
-                prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+            else:
+                prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id>
 You are a helpful AI assistant. Answer the question based on the provided context. If the context doesn't contain relevant information, say so clearly.<|eot_id|>
 
-<|start_header_id|>user<|end_header_id|>
+<|start_header_id|>user<|end_header_id>
 Context: {context}
 
 Question: {query}<|eot_id|>
 
 <|start_header_id|>assistant<|end_header_id|>"""
             
-            # Generate response
             with st.spinner("Generating answer..."):
                 response = self.pipe(
                     prompt,
@@ -290,7 +293,6 @@ Question: {query}<|eot_id|>
             
             answer = response[0]['generated_text'].strip()
             
-            # Clean up the answer
             if "<|im_end|>" in answer:
                 answer = answer.split("<|im_end|>")[0]
             if "<|eot_id|>" in answer:
@@ -328,7 +330,6 @@ with st.sidebar:
         index=0
     )
     
-    # Display model info
     model_info = MODEL_CONFIGS[selected_model]
     st.markdown(f"""
     <div class="model-card">
@@ -338,7 +339,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     
-    # Model initialization
     if st.button("🚀 Initialize Model", key="init_model"):
         with st.spinner("Initializing RAG system..."):
             st.session_state.rag_system = RAGSystem(
@@ -348,7 +348,6 @@ with st.sidebar:
     
     st.divider()
     
-    # PDF Upload
     st.header("📄 Upload PDF")
     uploaded_file = st.file_uploader(
         "Choose a PDF file",
@@ -358,18 +357,13 @@ with st.sidebar:
     
     if uploaded_file and st.session_state.rag_system:
         if st.button("🔄 Process PDF", key="process_pdf"):
-            # Extract text
             text = st.session_state.rag_system.extract_text_from_pdf(uploaded_file)
             
             if text:
-                # Chunk text
                 chunks = st.session_state.rag_system.chunk_text(text)
-                
-                # Create vector store
                 st.session_state.rag_system.create_vector_store(chunks)
                 st.session_state.pdf_processed = True
                 
-                # Show metrics
                 st.markdown(f"""
                 <div class="metrics-container">
                     <h4>📊 Processing Complete</h4>
@@ -378,12 +372,10 @@ with st.sidebar:
                 </div>
                 """, unsafe_allow_html=True)
     
-    # Settings
     st.header("⚙️ Settings")
     chunk_size = st.slider("Chunk Size", 500, 2000, 1000, 100)
     num_chunks = st.slider("Retrieved Chunks", 1, 10, 3)
     
-    # Clear chat
     if st.button("🗑️ Clear Chat"):
         st.session_state.chat_history = []
         st.rerun()
@@ -394,15 +386,12 @@ col1, col2 = st.columns([2, 1])
 with col1:
     st.header("💬 Chat with your PDF")
     
-    # Check if system is ready
     if not st.session_state.rag_system:
         st.warning("⚠️ Please initialize a model first from the sidebar")
     elif not st.session_state.pdf_processed:
         st.info("📋 Please upload and process a PDF to start asking questions")
     else:
-        # Chat interface
         with st.container():
-            # Display chat history
             for i, (question, answer) in enumerate(st.session_state.chat_history):
                 st.markdown(f"""
                 <div class="chat-message user-message">
@@ -416,7 +405,6 @@ with col1:
                 </div>
                 """, unsafe_allow_html=True)
         
-        # Question input
         with st.form("question_form", clear_on_submit=True):
             question = st.text_area(
                 "Ask a question about your PDF:",
@@ -429,19 +417,12 @@ with col1:
                 submitted = st.form_submit_button("🚀 Ask Question")
             
             if submitted and question.strip():
-                # Retrieve relevant documents
                 relevant_docs = st.session_state.rag_system.retrieve_relevant_docs(question, num_chunks)
                 
                 if relevant_docs:
-                    # Combine context
                     context = "\n\n".join(relevant_docs)
-                    
-                    # Generate answer
                     answer = st.session_state.rag_system.generate_answer(question, context)
-                    
-                    # Add to chat history
                     st.session_state.chat_history.append((question, answer))
-                    
                     st.rerun()
                 else:
                     st.error("No relevant information found in the document for your question.")
@@ -449,7 +430,6 @@ with col1:
 with col2:
     st.header("📈 System Status")
     
-    # Status indicators
     if st.session_state.rag_system:
         st.success("✅ Model Ready")
         st.info(f"🧠 Using: {selected_model}")
@@ -463,7 +443,6 @@ with col2:
     else:
         st.warning("⏳ No PDF Processed")
     
-    # System info
     st.header("💻 System Info")
     torch = lazy_import_torch()
     if torch:
@@ -479,7 +458,6 @@ with col2:
     else:
         st.warning("⚠️ PyTorch not available")
     
-    # Tips
     st.header("💡 Tips")
     st.markdown("""
     - **Better Questions**: Be specific and detailed
