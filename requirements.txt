@@ -23,4 +23,3 @@ bitsandbytes
 # Additional utilities
 requests
 typing-extensions
-STREAMLIT_SERVER_WATCHDOG_POLLING=false
