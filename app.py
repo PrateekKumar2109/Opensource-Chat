@@ -8,13 +8,15 @@ from langchain_community.vectorstores import Chroma
 from langchain_community.llms import HuggingFacePipeline
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import torch
 
 # Streamlit page configuration
 st.set_page_config(page_title="PDF Chatbot with Qwen 1B", layout="wide")
 st.title("📄 PDF Chatbot with Qwen 1B")
 st.markdown("Upload a PDF and ask questions about its content using a lightweight RAG system powered by Qwen 1B.")
+
+# Disable Streamlit file watcher to avoid PyTorch conflicts
+st.set_option('deprecation.showfileUploaderEncoding', False)
+st.set_option('client.showErrorDetails', False)
 
 # Initialize session state for storing vector store and chat history
 if 'vector_store' not in st.session_state:
@@ -63,29 +65,40 @@ with st.sidebar:
                 os.unlink(tmp_file_path)
                 st.success("PDF processed successfully!")
 
-# Load Qwen 1B model and tokenizer
+# Load Qwen 1B model and tokenizer with error handling
 @st.cache_resource
 def load_model():
-    model_name = "Qwen/Qwen2.5-1.5B-Instruct"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.float32,  # Use float32 for CPU
-        device_map="cpu"
-    )
-    pipe = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=512,
-        temperature=0.7,
-        top_p=0.95,
-        do_sample=True
-    )
-    return HuggingFacePipeline(pipeline=pipe)
+    try:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+        model_name = "Qwen/Qwen2.5-1.5B-Instruct"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float32,  # Use float32 for CPU
+            device_map="cpu"
+        )
+        pipe = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            max_new_tokens=512,
+            temperature=0.7,
+            top_p=0.95,
+            do_sample=True
+        )
+        return HuggingFacePipeline(pipeline=pipe)
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        return None
 
 # Initialize the model
 llm = load_model()
+
+# Check if model loading failed
+if llm is None:
+    st.error("Failed to load the language model. Please check your dependencies and try again.")
+    st.stop()
 
 # Define the prompt template for RAG
 prompt_template = """Use the following pieces of context to answer the question. If you don't know the answer, just say that you don't know, don't try to make up an answer.
