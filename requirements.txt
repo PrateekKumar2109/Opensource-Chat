@@ -16,6 +16,7 @@ PyPDF2
 scipy
 scikit-learn
 pandas
+langchain
 #xformers
 bitsandbytes
 
