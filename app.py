@@ -123,6 +123,3 @@ if st.session_state.vector_store:
         st.write(answer)
 else:
     st.info("Please upload a PDF file to start asking questions.")
-        st.write(answer)
-else:
-    st.info("Please upload a PDF file to start asking questions.")
